@@ -175,6 +175,8 @@ public:
 private:
     RawMemory<T> data_;
     size_t size_ = 0;
+    
+    void Uninitialized_Move_Or_Copy_N(iterator begin, size_t size, iterator new_begin);
 };
 
 
@@ -240,17 +242,22 @@ typename Vector<T>::const_iterator Vector<T>::cend() const noexcept {
 
 //методы
 template <typename T>
+void Vector<T>::Uninitialized_Move_Or_Copy_N(iterator begin, size_t size, iterator new_begin) {
+    // constexpr оператор if будет вычислен во время компиляции
+    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+        std::uninitialized_move_n(begin, size, new_begin);
+    } else {
+        std::uninitialized_copy_n(begin, size, new_begin);
+    }
+}
+
+template <typename T>
 void Vector<T>::Reserve(size_t new_capacity) {
     if (new_capacity <= data_.Capacity()) {
         return;
     }
     RawMemory<T> new_data(new_capacity);
-    // constexpr оператор if будет вычислен во время компиляции
-    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-        std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-    } else {
-        std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-    }
+    Uninitialized_Move_Or_Copy_N(data_.GetAddress(), size_, new_data.GetAddress());
     std::destroy_n(data_.GetAddress(), size_);
     data_.Swap(new_data);
 }
@@ -281,12 +288,7 @@ void Vector<T>::PushBack(const T& value) {
         } else {
             RawMemory<T> new_data(size_ * 2);
             new (new_data.GetAddress() + size_) T(value);
-            // constexpr оператор if будет вычислен во время компиляции
-            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-            } else {
-                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-            }
+            Uninitialized_Move_Or_Copy_N(data_.GetAddress(), size_, new_data.GetAddress());
             std::destroy_n(data_.GetAddress(), size_);
             data_.Swap(new_data);
         }
@@ -305,12 +307,7 @@ void Vector<T>::PushBack(T&& value) {
         } else {
             RawMemory<T> new_data(size_ * 2);
             new (new_data.GetAddress() + size_) T(std::move(value));
-            // constexpr оператор if будет вычислен во время компиляции
-            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-            } else {
-                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-            }
+            Uninitialized_Move_Or_Copy_N(data_.GetAddress(), size_, new_data.GetAddress());
             std::destroy_n(data_.GetAddress(), size_);
             data_.Swap(new_data);
         }
@@ -322,8 +319,10 @@ void Vector<T>::PushBack(T&& value) {
 
 template <typename T>
 void Vector<T>::PopBack() {
-    std::destroy_at(data_.GetAddress() + size_ - 1);
-    --size_;
+    if (size_ > 0){
+        std::destroy_at(data_.GetAddress() + size_ - 1);
+        --size_;
+    }
 }
 
 template <typename T>
@@ -336,12 +335,7 @@ T& Vector<T>::EmplaceBack(Args&&... args) {
         } else {
             RawMemory<T> new_data(size_ * 2);
             new (new_data.GetAddress() + size_) T(std::forward<Args>(args)...);
-            // constexpr оператор if будет вычислен во время компиляции
-            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-            } else {
-                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-            }
+            Uninitialized_Move_Or_Copy_N(data_.GetAddress(), size_, new_data.GetAddress());
             std::destroy_n(data_.GetAddress(), size_);
             data_.Swap(new_data);
         }
@@ -355,6 +349,9 @@ T& Vector<T>::EmplaceBack(Args&&... args) {
 template <typename T>
 template <typename... Args>
 typename Vector<T>::iterator Vector<T>::Emplace(const_iterator pos, Args&&... args) {
+    
+    assert(pos >= begin() && pos <= end());
+    
     auto elem_pos = begin();
     auto pos_num = pos - begin();
     
@@ -365,14 +362,10 @@ typename Vector<T>::iterator Vector<T>::Emplace(const_iterator pos, Args&&... ar
         } else {
             RawMemory<T> new_data(size_ * 2);
             elem_pos = new (new_data.GetAddress() + pos_num) T(std::forward<Args>(args)...);
+        
+            Uninitialized_Move_Or_Copy_N(begin(), pos_num, new_data.GetAddress());
+            Uninitialized_Move_Or_Copy_N(begin() + pos_num, size_ - pos_num, new_data.GetAddress() + (pos_num + 1));
             
-            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-                std::uninitialized_move_n(begin(), pos_num, new_data.GetAddress());
-                std::uninitialized_move_n(begin() + pos_num, size_ - pos_num, new_data.GetAddress() + (pos_num + 1));
-            } else {
-                std::uninitialized_copy_n(begin(), pos_num, new_data.GetAddress());
-                std::uninitialized_copy_n(begin() + pos_num, size_ - pos_num, new_data.GetAddress() + (pos_num + 1));
-            }
             std::destroy_n(begin(), size_);
             data_.Swap(new_data);
         }
@@ -391,6 +384,7 @@ typename Vector<T>::iterator Vector<T>::Emplace(const_iterator pos, Args&&... ar
     return elem_pos;
 }
 
+
 template <typename T>
 typename Vector<T>::iterator Vector<T>::Insert(const_iterator pos, const T& value) {
     return Emplace(pos, value);
@@ -403,9 +397,14 @@ typename Vector<T>::iterator Vector<T>::Insert(const_iterator pos, T&& value) {
 
 template <typename T>
 typename Vector<T>::iterator Vector<T>::Erase(const_iterator pos) {
+    
+    assert(pos >= begin() && pos <= end());
+    
     auto elem_pos = begin() + (pos - begin());
     std::move(elem_pos + 1, end(), elem_pos);
     std::destroy_at(end() - 1);
     --size_;
     return elem_pos;
 }
+
+
